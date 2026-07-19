@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const TIDYCAL_TOKEN = Deno.env.get('TIDYCAL_TOKEN');
 const BOOKING_TYPE_ID = 413150;
@@ -33,9 +34,10 @@ Deno.serve(async (req: Request) => {
   const name = (body.name || '').trim();
   const email = cleanEmail(body.email || '');
   const startsAt = (body.start_at || body.starts_at || '').trim();
+  const phone = (body.phone || '').trim();
   const timezone = body.timezone || 'Pacific/Auckland';
 
-  console.log('Received booking request:', { name, email, startsAt, timezone });
+  console.log('Received booking request:', { name, email, startsAt, phone, timezone });
 
   if (!name || !email || !startsAt) {
     return new Response(JSON.stringify({ error: 'Missing required fields', received: { name, email, startsAt } }), {
@@ -65,6 +67,32 @@ Deno.serve(async (req: Request) => {
       status: tidyCalRes.status,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
+  }
+
+  // Store booking in appointments table for follow-up email tracking
+  try {
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+
+    const { error: insertError } = await supabase
+      .from('appointments')
+      .insert({
+        attendee_name: name,
+        attendee_email: email,
+        attendee_phone: phone || null,
+        starts_at: startsAt,
+        tidycal_booking_id: String(tidyCalData.data?.id || tidyCalData.id || ''),
+      });
+
+    if (insertError) {
+      console.error('Failed to store appointment:', insertError.message);
+    } else {
+      console.log('Appointment stored for follow-up tracking');
+    }
+  } catch (err) {
+    console.error('Supabase insert error:', err);
   }
 
   return new Response(JSON.stringify({ success: true, booking: tidyCalData }), {

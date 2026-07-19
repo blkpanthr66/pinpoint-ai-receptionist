@@ -9,6 +9,13 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
+function isWithinNZBusinessHours(date: Date): boolean {
+  const nzTime = new Date(date.toLocaleString('en-US', { timeZone: 'Pacific/Auckland' }));
+  const hour = nzTime.getHours();
+  const day = nzTime.getDay();
+  return day >= 1 && day <= 5 && hour >= 9 && hour < 17;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: corsHeaders });
@@ -39,17 +46,19 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  // Today's date in NZ timezone for same-day detection
   const todayNZ = now.toLocaleDateString('en-NZ', { timeZone: 'Pacific/Auckland', year: 'numeric', month: '2-digit', day: '2-digit' });
 
-  // Pick 3 slots spaced at least 1 hour apart
-  const allSlots: { starts_at: string }[] = data.data || [];
+  // Filter to NZ business hours only (9am-5pm Mon-Fri), then pick 3 slots 1hr apart
+  const allSlots: { starts_at: string }[] = (data.data || []).filter((slot: { starts_at: string }) =>
+    isWithinNZBusinessHours(new Date(slot.starts_at))
+  );
+
   const picked: { starts_at: string }[] = [];
   let lastPickedTime = 0;
 
   for (const slot of allSlots) {
     const slotTime = new Date(slot.starts_at).getTime();
-    if (picked.length === 0 || slotTime - lastPickedTime >= 60 * 60 * 1000) {
+    if (picked.length === 0 || slotTime - lastPickedTime >= 90 * 60 * 1000) {
       picked.push(slot);
       lastPickedTime = slotTime;
     }
@@ -58,7 +67,6 @@ Deno.serve(async (req: Request) => {
 
   const slots = picked.map((slot) => {
     const d = new Date(slot.starts_at);
-
     const slotDateNZ = d.toLocaleDateString('en-NZ', { timeZone: 'Pacific/Auckland', year: 'numeric', month: '2-digit', day: '2-digit' });
     const isToday = slotDateNZ === todayNZ;
 
