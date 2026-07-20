@@ -62,8 +62,23 @@ Deno.serve(async (req: Request) => {
   const tidyCalData = await tidyCalRes.json();
   console.log('TidyCal response:', tidyCalRes.status, JSON.stringify(tidyCalData));
 
+  // 409 = the slot was just taken. Return a clear signal (HTTP 200 so Vapi
+  // treats it as a normal tool result) so Aria offers a different time
+  // instead of retrying the same one.
+  if (tidyCalRes.status === 409) {
+    console.log('Slot conflict (409) for', startsAt);
+    return new Response(JSON.stringify({
+      success: false,
+      reason: 'slot_taken',
+      message: 'That time was just taken. Apologise briefly and offer the customer one of the other available times instead. Do not retry the same time.',
+    }), {
+      status: 200,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   if (!tidyCalRes.ok) {
-    return new Response(JSON.stringify({ error: 'TidyCal booking failed', details: tidyCalData }), {
+    return new Response(JSON.stringify({ success: false, error: 'TidyCal booking failed', details: tidyCalData }), {
       status: tidyCalRes.status,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
