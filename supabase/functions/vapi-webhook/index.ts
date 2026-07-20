@@ -98,25 +98,65 @@ Deno.serve(async (req: Request) => {
     // No existing lead matched — create a new one for this inbound call
     console.log(`No lead found for call ${vapiCallId}, creating inbound lead`);
 
-    // Find or create contact by phone number
-    let contactId: string | null = null;
-    if (callerPhone) {
-      const { data: existingContact } = await supabase
-        .from('contacts')
-        .select('id')
-        .eq('phone', callerPhone)
-        .maybeSingle();
+    // If an appointment was booked during this call, Aria collected the caller's
+    // real name/email/phone — reuse them rather than leaving the contact blank.
+    let booked: { attendee_name?: string; attendee_email?: string; attendee_phone?: string } | null = null;
+    if (call?.startedAt) {
+      const from = new Date(new Date(call.startedAt).getTime() - 60_000).toISOString();
+      const to = new Date(Date.now() + 60_000).toISOString();
+      const { data: appts } = await supabase
+        .from('appointments')
+        .select('attendee_name, attendee_email, attendee_phone')
+        .gte('created_at', from)
+        .lte('created_at', to)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      booked = appts?.[0] ?? null;
+      if (booked) console.log('Matched appointment booked during call:', booked.attendee_email);
+    }
 
-      if (existingContact) {
-        contactId = existingContact.id;
-      } else {
-        const { data: newContact } = await supabase
-          .from('contacts')
-          .insert({ phone: callerPhone, name: 'Phone Caller', source: 'phone', tenant_id: TENANT_ID })
-          .select('id')
-          .single();
-        contactId = newContact?.id || null;
+    const contactName = booked?.attendee_name || 'Phone Caller';
+    const contactEmail = booked?.attendee_email || null;
+    const contactPhone = booked?.attendee_phone || callerPhone || null;
+
+    // Find an existing contact by email, then phone; otherwise create one.
+    // Always create a contact so the lead is never left showing "Unknown".
+    let contactId: string | null = null;
+
+    if (contactEmail) {
+      const { data: byEmail } = await supabase
+        .from('contacts').select('id').eq('email', contactEmail).maybeSingle();
+      if (byEmail) contactId = byEmail.id;
+    }
+    if (!contactId && contactPhone) {
+      const { data: byPhone } = await supabase
+        .from('contacts').select('id').eq('phone', contactPhone).maybeSingle();
+      if (byPhone) contactId = byPhone.id;
+    }
+
+    if (contactId) {
+      // Backfill any details we now know but the existing contact is missing
+      const patch: Record<string, string> = {};
+      if (contactEmail) patch.email = contactEmail;
+      if (contactPhone) patch.phone = contactPhone;
+      if (booked?.attendee_name) patch.name = booked.attendee_name;
+      if (Object.keys(patch).length) {
+        await supabase.from('contacts').update(patch).eq('id', contactId);
       }
+    } else {
+      const { data: newContact, error: contactErr } = await supabase
+        .from('contacts')
+        .insert({
+          name: contactName,
+          email: contactEmail,
+          phone: contactPhone,
+          source: 'phone',
+          tenant_id: TENANT_ID,
+        })
+        .select('id')
+        .single();
+      if (contactErr) console.error('Failed to create contact:', contactErr.message);
+      contactId = newContact?.id || null;
     }
 
     const aiSummary = summary || (transcript ? transcript.slice(0, 200) : 'Inbound phone call');
