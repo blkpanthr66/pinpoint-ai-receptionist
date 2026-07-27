@@ -21,6 +21,14 @@ Deno.serve(async (req: Request) => {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
 
+  // Shared-secret auth (only enforced once PINPOINT_WEBHOOK_SECRET is set)
+  const SECRET = Deno.env.get('PINPOINT_WEBHOOK_SECRET');
+  if (SECRET && req.headers.get('x-pinpoint-secret') !== SECRET) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   const now = new Date();
   const weekLater = new Date(now);
   weekLater.setDate(weekLater.getDate() + 7);
