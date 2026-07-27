@@ -51,13 +51,11 @@ Deno.serve(async () => {
       const emailBody = `
 <p>Hi ${firstName},</p>
 
-<p>I hope your Zoom consultation with Peter yesterday went well!</p>
+<p>I hope your Zoom consultation with Peter went well!</p>
 
 <p>I just wanted to check in — was the session helpful? Did it give you a clearer picture of how AI can work for your business?</p>
 
-<p>If you have any questions or there's anything else you'd like to explore, feel free to reply to this email or give us a call. We're always happy to help.</p>
-
-<p>We look forward to hearing from you.</p>
+<p>If there's anything else you need help with, or you'd like more information about anything we covered, just get in touch at <a href="mailto:support@pinpointlocal.ai">support@pinpointlocal.ai</a> and we'll be happy to help.</p>
 
 <p>Warm regards,<br>
 Peter Moengaroa<br>
@@ -74,6 +72,7 @@ PinPoint Local AI<br>
         body: JSON.stringify({
           from: `${FROM_NAME} <${FROM_EMAIL}>`,
           to: [appt.attendee_email],
+          reply_to: 'support@pinpointlocal.ai',
           subject: `How did your consultation go, ${firstName}?`,
           html: emailBody,
         }),
