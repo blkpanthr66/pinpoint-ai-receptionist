@@ -1,8 +1,9 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
-// Sends the caller a booking-link SMS via Twilio. The message content and sender
-// live here (server-side) so the assistant only has to pass the destination
-// number — no fragile message-passing through the voice model.
+// Sends the caller a booking-link SMS via Twilio. The destination number comes
+// from Vapi's call metadata ({{customer.number}}, injected as caller_number) so
+// the voice model never has to know or transcribe it. A caller on a landline can
+// give a different mobile, which arrives as `to` and takes precedence.
 
 const BOOKING_URL = 'https://tidycal.com/ekiwionline/30-minute-meeting';
 
@@ -12,12 +13,15 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
+function digits(s: string): string {
+  return (s || '').replace(/\D/g, '');
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
 
-  // Shared-secret auth (only enforced once PINPOINT_WEBHOOK_SECRET is set)
   const SECRET = Deno.env.get('PINPOINT_WEBHOOK_SECRET');
   if (SECRET && req.headers.get('x-pinpoint-secret') !== SECRET) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), {
@@ -35,17 +39,22 @@ Deno.serve(async (req: Request) => {
   }
 
   const to = (body.to || '').trim();
+  const callerNumber = (body.caller_number || '').trim();
   const firstName = (body.first_name || '').trim();
 
-  if (!to) {
-    return new Response(JSON.stringify({ success: false, reason: 'missing_number', message: 'No mobile number was provided.' }), {
-      status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+  // A caller-supplied mobile (landline case) wins; otherwise use the caller ID.
+  const dest = digits(to).length >= 8 ? to : callerNumber;
+
+  if (digits(dest).length < 8) {
+    return new Response(JSON.stringify({
+      success: false, reason: 'missing_number',
+      message: 'No valid mobile number was available. Ask the caller for their best mobile number.',
+    }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 
   const sid = Deno.env.get('TWILIO_ACCOUNT_SID');
   const token = Deno.env.get('TWILIO_AUTH_TOKEN');
-  const from = Deno.env.get('TWILIO_SMS_FROM'); // e.g. "PinPoint" or a +number
+  const from = Deno.env.get('TWILIO_SMS_FROM');
 
   if (!sid || !token || !from) {
     console.error('Twilio secrets not configured');
@@ -57,7 +66,7 @@ Deno.serve(async (req: Request) => {
   const greeting = firstName ? `Hi ${firstName}, ` : 'Hi, ';
   const smsBody = `${greeting}thanks for calling PinPoint Local AI! Book your free 30-minute Zoom consult with Peter here: ${BOOKING_URL} — pick a time and pop in your details and you're all set. — Aria`;
 
-  const form = new URLSearchParams({ To: to, From: from, Body: smsBody });
+  const form = new URLSearchParams({ To: dest, From: from, Body: smsBody });
 
   const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
     method: 'POST',
@@ -77,7 +86,7 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  console.log(`Booking SMS sent to ${to} (sid ${data.sid})`);
+  console.log(`Booking SMS sent to ${dest} (sid ${data.sid})`);
   return new Response(JSON.stringify({ success: true, sid: data.sid }), {
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
