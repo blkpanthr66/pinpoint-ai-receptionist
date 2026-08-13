@@ -85,6 +85,15 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ error: 'Lead not found' }), { status: 404, headers: corsHeaders });
     }
 
+    // Never call back a lead that originated from an inbound phone call.
+    // The vapi-webhook creates these (source 'phone' / classification
+    // 'phone_enquiry') after an inbound call ends — calling them back would
+    // ring the same caller in a loop.
+    if (lead.source === 'phone' || lead.classification === 'phone_enquiry') {
+      console.log(`Lead ${leadId} originated from an inbound call — skipping outbound callback`);
+      return new Response(JSON.stringify({ skipped: 'inbound-origin lead' }), { headers: corsHeaders });
+    }
+
     const contact = lead.contacts;
     const phone = contact?.phone;
     const name = contact?.name || 'there';

@@ -57,6 +57,8 @@ Deno.serve(async () => {
     .eq('call_status', 'pending')
     .lt('call_attempt_count', MAX_CALL_ATTEMPTS)
     .not('contacts.phone', 'is', null)
+    .neq('source', 'phone')
+    .neq('classification', 'phone_enquiry')
     .limit(10);
 
   if (error) {
